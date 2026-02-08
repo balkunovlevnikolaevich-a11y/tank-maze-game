@@ -1,19 +1,137 @@
-"""
-TANK MAZE PHYSICS - Простая игра танки в лабиринте
-Минимальный, но рабочий код
-"""
-
 import arcade
 import math
 import random
+from typing import List, Tuple
 
 # Настройки экрана
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 600
 SCREEN_TITLE = "Tank Maze Physics"
 
+
+class CollisionManager:
+    """Класс для управления всеми столкновениями в игре"""
+
+    @staticmethod
+    def check_point_in_rect(point_x: float, point_y: float,
+                            rect_center_x: float, rect_center_y: float,
+                            rect_width: float, rect_height: float) -> bool:
+        """Проверка, находится ли точка внутри прямоугольника"""
+        left = rect_center_x - rect_width / 2
+        right = rect_center_x + rect_width / 2
+        bottom = rect_center_y - rect_height / 2
+        top = rect_center_y + rect_height / 2
+
+        return (left <= point_x <= right and bottom <= point_y <= top)
+
+    @staticmethod
+    def check_circle_rect_collision(circle_x: float, circle_y: float, circle_radius: float,
+                                    rect_center_x: float, rect_center_y: float,
+                                    rect_width: float, rect_height: float) -> bool:
+        """Проверка столкновения круга с прямоугольником"""
+        # Находим ближайшую точку прямоугольника к кругу
+        closest_x = max(rect_center_x - rect_width / 2, min(circle_x, rect_center_x + rect_width / 2))
+        closest_y = max(rect_center_y - rect_height / 2, min(circle_y, rect_center_y + rect_height / 2))
+
+        # Вычисляем расстояние от круга до ближайшей точки
+        distance_x = circle_x - closest_x
+        distance_y = circle_y - closest_y
+
+        # Проверяем, меньше ли расстояние, чем радиус круга
+        return (distance_x ** 2 + distance_y ** 2) <= (circle_radius ** 2)
+
+    @staticmethod
+    def get_rotated_rect_bounds(center_x: float, center_y: float, width: float, height: float,
+                                angle: float) -> List[Tuple[float, float]]:
+        """Получить координаты углов повернутого прямоугольника"""
+        half_width = width / 2
+        half_height = height / 2
+
+        # Углы неповернутого прямоугольника
+        corners = [
+            (-half_width, -half_height),
+            (half_width, -half_height),
+            (half_width, half_height),
+            (-half_width, half_height)
+        ]
+
+        # Поворачиваем углы
+        angle_rad = math.radians(angle)
+        cos_a = math.cos(angle_rad)
+        sin_a = math.sin(angle_rad)
+
+        rotated_corners = []
+        for x, y in corners:
+            x_rot = x * cos_a - y * sin_a + center_x
+            y_rot = x * sin_a + y * cos_a + center_y
+            rotated_corners.append((x_rot, y_rot))
+
+        return rotated_corners
+
+    @staticmethod
+    def check_rotated_rect_collision(rect1_corners: List[Tuple[float, float]],
+                                     rect2_center_x: float, rect2_center_y: float,
+                                     rect2_width: float, rect2_height: float) -> Tuple[bool, float, float]:
+        """Проверка столкновения повернутого прямоугольника с обычным и возврат вектора нормали"""
+        # Проверяем столкновение углов повернутого прямоугольника со вторым прямоугольником
+        collision = False
+        collision_normal_x = 0
+        collision_normal_y = 0
+
+        for corner_x, corner_y in rect1_corners:
+            if CollisionManager.check_point_in_rect(corner_x, corner_y,
+                                                    rect2_center_x, rect2_center_y,
+                                                    rect2_width, rect2_height):
+                collision = True
+                # Вычисляем нормаль от стены
+                wall_left = rect2_center_x - rect2_width / 2
+                wall_right = rect2_center_x + rect2_width / 2
+                wall_bottom = rect2_center_y - rect2_height / 2
+                wall_top = rect2_center_y + rect2_height / 2
+
+                # Находим ближайшую сторону
+                dist_left = abs(corner_x - wall_left)
+                dist_right = abs(corner_x - wall_right)
+                dist_bottom = abs(corner_y - wall_bottom)
+                dist_top = abs(corner_y - wall_top)
+
+                min_dist = min(dist_left, dist_right, dist_bottom, dist_top)
+
+                if min_dist == dist_left:
+                    collision_normal_x = -1
+                elif min_dist == dist_right:
+                    collision_normal_x = 1
+                elif min_dist == dist_bottom:
+                    collision_normal_y = -1
+                else:
+                    collision_normal_y = 1
+
+                break
+
+        return collision, collision_normal_x, collision_normal_y
+
+    @staticmethod
+    def check_line_of_sight(point1_x: float, point1_y: float,
+                            point2_x: float, point2_y: float,
+                            walls: list, step: int = 20) -> bool:
+        """Проверка прямой видимости между двумя точками (нет стен на пути)"""
+        # Проверяем несколько точек вдоль линии между двумя точками
+        for i in range(step + 1):
+            t = i / step
+            check_x = point1_x + (point2_x - point1_x) * t
+            check_y = point1_y + (point2_y - point1_y) * t
+
+            for wall in walls:
+                if CollisionManager.check_point_in_rect(check_x, check_y,
+                                                        wall.center_x, wall.center_y,
+                                                        wall.width, wall.height):
+                    return False
+        return True
+
+
 class Tank:
     """Класс танка"""
+
     def __init__(self, x, y, is_player=True):
         self.center_x = x
         self.center_y = y
@@ -31,7 +149,7 @@ class Tank:
         self.velocity_x = 0
         self.velocity_y = 0
         self.acceleration = 500
-        self.friction = 0.9
+        self.friction = 0.95
         self.max_speed = 200
 
         # Управление
@@ -45,11 +163,14 @@ class Tank:
         self.is_alive = True
         self.health = 100
         self.last_shot = 0
-        self.shoot_cooldown = 0.5 if is_player else 1.5  # Враги стреляют медленнее
-        self.shoot_range = 300  # Дальность стрельбы для врагов
+        self.shoot_cooldown = 0.5 if is_player else 1.5
+        self.shoot_range = 300
 
     def draw(self):
         """Отрисовка танка"""
+        if not self.is_alive:
+            return
+
         # Создаем точки для корпуса танка
         half_width = self.width / 2
         half_height = self.height / 2
@@ -96,8 +217,43 @@ class Tank:
             arcade.color.BLACK, 3
         )
 
-    def update(self, delta_time):
-        """Обновление движения"""
+        # Полоска здоровья для врагов
+        if not self.is_player and self.is_alive:
+            health_width = 30
+            health_height = 5
+            health_x = self.center_x
+            health_y = self.center_y + 25
+
+            # Фон полоски здоровья (красный)
+            health_bg_points = [
+                (health_x - health_width / 2, health_y - health_height / 2),
+                (health_x + health_width / 2, health_y - health_height / 2),
+                (health_x + health_width / 2, health_y + health_height / 2),
+                (health_x - health_width / 2, health_y + health_height / 2)
+            ]
+            arcade.draw_polygon_filled(health_bg_points, arcade.color.RED)
+
+            # Текущее здоровье (зеленый)
+            health_percent = max(0, self.health / 100)
+            current_width = health_width * health_percent
+            if current_width > 0:
+                health_fg_points = [
+                    (health_x - health_width / 2, health_y - health_height / 2),
+                    (health_x - health_width / 2 + current_width, health_y - health_height / 2),
+                    (health_x - health_width / 2 + current_width, health_y + health_height / 2),
+                    (health_x - health_width / 2, health_y + health_height / 2)
+                ]
+                arcade.draw_polygon_filled(health_fg_points, arcade.color.GREEN)
+
+    def update(self, delta_time, walls):
+        """Обновление движения с проверкой столкновений"""
+        if not self.is_alive:
+            return
+
+        # Сохраняем предыдущую позицию
+        prev_x = self.center_x
+        prev_y = self.center_y
+
         # Ускорение
         acceleration_x = 0
         acceleration_y = 0
@@ -126,7 +282,7 @@ class Tank:
         self.velocity_y += acceleration_y
 
         # Ограничение скорости
-        speed = math.sqrt(self.velocity_x**2 + self.velocity_y**2)
+        speed = math.sqrt(self.velocity_x ** 2 + self.velocity_y ** 2)
         if speed > self.max_speed:
             scale = self.max_speed / speed
             self.velocity_x *= scale
@@ -136,9 +292,19 @@ class Tank:
         self.velocity_x *= self.friction
         self.velocity_y *= self.friction
 
-        # Движение (временное)
+        # Движение
         self.center_x += self.velocity_x * delta_time
         self.center_y += self.velocity_y * delta_time
+
+        # Проверка столкновений со стенами
+        collision = self.check_wall_collision(walls)
+
+        # Если есть столкновение, возвращаемся к предыдущей позиции и останавливаемся
+        if collision:
+            self.center_x = prev_x
+            self.center_y = prev_y
+            self.velocity_x = 0
+            self.velocity_y = 0
 
     def get_corners(self):
         """Получить координаты углов танка"""
@@ -166,40 +332,36 @@ class Tank:
 
     def check_wall_collision(self, walls):
         """Проверка столкновений со стенами"""
+        if not self.is_alive:
+            return False
+
+        # Получаем углы танка
         corners = self.get_corners()
 
+        # Проверяем столкновение с каждой стеной
         for wall in walls:
-            wall_left = wall.center_x - wall.width/2
-            wall_right = wall.center_x + wall.width/2
-            wall_bottom = wall.center_y - wall.height/2
-            wall_top = wall.center_y + wall.height/2
+            # Получаем границы стены
+            wall_left = wall.center_x - wall.width / 2
+            wall_right = wall.center_x + wall.width / 2
+            wall_bottom = wall.center_y - wall.height / 2
+            wall_top = wall.center_y + wall.height / 2
 
+            # Проверяем каждый угол танка
             for corner_x, corner_y in corners:
                 if (wall_left <= corner_x <= wall_right and
-                    wall_bottom <= corner_y <= wall_top):
-                    # Столкновение - отталкиваем танк
-                    if corner_x < wall_left:
-                        self.center_x = wall_left - self.width/2
-                    elif corner_x > wall_right:
-                        self.center_x = wall_right + self.width/2
-
-                    if corner_y < wall_bottom:
-                        self.center_y = wall_bottom - self.height/2
-                    elif corner_y > wall_top:
-                        self.center_y = wall_top + self.height/2
-
-                    # Отскок
-                    self.velocity_x *= -0.5
-                    self.velocity_y *= -0.5
+                        wall_bottom <= corner_y <= wall_top):
                     return True
+
         return False
+
 
 class Bullet:
     """Класс пули"""
+
     def __init__(self, x, y, angle, is_player_bullet=True):
         self.center_x = x
         self.center_y = y
-        self.radius = 3
+        self.radius = 5
         self.color = arcade.color.YELLOW if is_player_bullet else arcade.color.ORANGE
         self.velocity_x = math.cos(math.radians(angle)) * 400
         self.velocity_y = math.sin(math.radians(angle)) * 400
@@ -220,42 +382,45 @@ class Bullet:
 
         # Проверка выхода за границы
         if (self.center_x < 0 or self.center_x > SCREEN_WIDTH or
-            self.center_y < 0 or self.center_y > SCREEN_HEIGHT or
-            self.time_alive > self.lifetime):
+                self.center_y < 0 or self.center_y > SCREEN_HEIGHT or
+                self.time_alive > self.lifetime):
             return False
         return True
 
-class Wall:
+
+class Wall(arcade.SpriteSolidColor):
     """Класс стены"""
-    def __init__(self, x, y, width=50, height=50):
+
+    def __init__(self, x, y, width=20, height=20):
+        super().__init__(width, height, arcade.color.GRAY)
         self.center_x = x
         self.center_y = y
-        self.width = width
-        self.height = height
-        self.color = arcade.color.GRAY
 
     def draw(self):
-        # Рисуем прямоугольник
-        left = self.center_x - self.width/2
-        right = self.center_x + self.width/2
-        bottom = self.center_y - self.height/2
-        top = self.center_y + self.height/2
+        """Отрисовка стены (переопределяем для контура)"""
+        # Вызываем метод родителя для заливки
+        super().draw()
+
+        # Добавляем контур
+        left = self.center_x - self.width / 2
+        right = self.center_x + self.width / 2
+        bottom = self.center_y - self.height / 2
+        top = self.center_y + self.height / 2
 
         points = [
             (left, bottom),
             (right, bottom),
             (right, top),
-            (left, top)
+            (left, top),
+            (left, bottom)  # Замыкаем контур
         ]
 
-        arcade.draw_polygon_filled(points, self.color)
+        arcade.draw_line_strip(points, arcade.color.BLACK, 2)
 
-        # Контур
-        outline_points = points + [points[0]]
-        arcade.draw_line_strip(outline_points, arcade.color.BLACK, 2)
 
 class Game(arcade.Window):
     """Главное окно игры"""
+
     def __init__(self):
         super().__init__(SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_TITLE)
 
@@ -263,53 +428,155 @@ class Game(arcade.Window):
         self.player = None
         self.enemies = []
         self.bullets = []
-        self.walls = []
+        self.current_level = 0
+        self.levels = []  # Здесь будут храниться все уровни
+        self.level_enemies = []  # Враги для каждого уровня
+
+        self.setup_levels()
+
+        # Спрайтовые списки
+        self.wall_list = None
+        self.player_list = None
+        self.player = None
 
         # Время
         self.total_time = 0
 
+        # Менеджер столкновений
+        self.collision_manager = CollisionManager()
+
         # Инициализация
         self.setup()
 
-    def setup(self):
-        """Настройка игры"""
-        # Игрок
-        self.player = Tank(100, 100, is_player=True)
+    def setup_levels(self):
+        """Создаем несколько уровней с разными врагами"""
 
-        # Враги
-        self.enemies = [
-            Tank(600, 500, is_player=False),
-            Tank(400, 300, is_player=False),
-            Tank(700, 200, is_player=False)
+        # Уровень 1 - обучающий
+        level1 = [
+            # Границы экрана
+            (100, 100, 600, 20),  # нижняя стена
+            (100, 500, 600, 20),  # верхняя стена
+            (100, 100, 20, 400),  # левая стена
+            (680, 100, 20, 400),  # правая стена
+
+            # Препятствия
+            (200, 200, 100, 20),
+            (400, 300, 20, 100),
+            (300, 400, 150, 20),
         ]
 
-        # Стены
-        self.walls = []
+        # Враги для уровня 1
+        enemies1 = [
+            (600, 500),  # 1 враг
+        ]
 
-        # Внешние стены
-        wall_thickness = 20
-        # Верхняя стена
-        self.walls.append(Wall(SCREEN_WIDTH//2, SCREEN_HEIGHT - wall_thickness//2, SCREEN_WIDTH, wall_thickness))
-        # Нижняя стена
-        self.walls.append(Wall(SCREEN_WIDTH//2, wall_thickness//2, SCREEN_WIDTH, wall_thickness))
-        # Левая стена
-        self.walls.append(Wall(wall_thickness//2, SCREEN_HEIGHT//2, wall_thickness, SCREEN_HEIGHT))
-        # Правая стена
-        self.walls.append(Wall(SCREEN_WIDTH - wall_thickness//2, SCREEN_HEIGHT//2, wall_thickness, SCREEN_HEIGHT))
+        # Уровень 2 (сложнее)
+        level2 = [
+            # Границы
+            (50, 50, 700, 20),
+            (50, 550, 700, 20),
+            (50, 50, 20, 500),
+            (730, 50, 20, 500),
 
-        # Внутренние стены
-        self.walls.append(Wall(300, 400, 100, 20))
-        self.walls.append(Wall(500, 300, 20, 100))
-        self.walls.append(Wall(200, 200, 150, 20))
-        self.walls.append(Wall(600, 100, 100, 20))
-        self.walls.append(Wall(400, 500, 20, 100))
+            # Лабиринт
+            (150, 150, 20, 200),
+            (150, 350, 200, 20),
+            (350, 250, 20, 150),
+            (250, 450, 150, 20),
+            (450, 150, 20, 250),
+            (550, 300, 150, 20),
+            (650, 150, 20, 150),
+        ]
+
+        # Враги для уровня 2
+        enemies2 = [
+            (200, 250),
+            (500, 400),
+            (650, 200),
+        ]
+
+        # Уровень 3 - сложный
+        level3 = [
+            # Границы
+            (50, 50, 700, 20),
+            (50, 550, 700, 20),
+            (50, 50, 20, 500),
+            (730, 50, 20, 500),
+
+            # Крест из стен
+            (300, 200, 200, 20),
+            (400, 100, 20, 200),
+            (300, 400, 200, 20),
+            (400, 400, 20, 200),
+
+            # Дополнительные препятствия
+            (100, 300, 150, 20),
+            (550, 300, 150, 20),
+        ]
+
+        # Враги для уровня 3
+        enemies3 = [
+            (150, 150),
+            (650, 150),
+            (400, 300),
+            (150, 450),
+            (650, 450),
+        ]
+
+        # Сохраняем все уровни
+        self.levels = [level1, level2, level3]
+        self.level_enemies = [enemies1, enemies2, enemies3]
+
+    def setup(self, level=None):
+        """Настройка игры"""
+        if level is not None:
+            self.current_level = level
+
+        # Сброс состояния игры
+        self.game_over = False
+
+        # Игрок
+        self.player = Tank(200, 150, is_player=True)
+        self.player.health = 100  # Восстанавливаем здоровье при новом уровне
+
+        # Враги для текущего уровня
+        self.enemies = []
+        if self.current_level < len(self.level_enemies):
+            for x, y in self.level_enemies[self.current_level]:
+                enemy = Tank(x, y, is_player=False)
+                # Разные характеристики для врагов на разных уровнях
+                if self.current_level == 2:  # Сложный уровень
+                    enemy.health = 150
+                    enemy.shoot_cooldown = 1.0
+                self.enemies.append(enemy)
+
+        # Очищаем списки
+        self.wall_list = arcade.SpriteList()
+        self.player_list = arcade.SpriteList()
+
+        # Создаем стены для текущего уровня
+        if self.current_level < len(self.levels):
+            level_data = self.levels[self.current_level]
+
+            for wall_data in level_data:
+                x, y, width, height = wall_data
+                # Создаем несколько спрайтов для больших стен
+                if width > 20 or height > 20:
+                    # Для больших стен создаем несколько блоков
+                    for i in range(0, width, 20):
+                        for j in range(0, height, 20):
+                            wall = Wall(x + i + 10, y + j + 10)
+                            self.wall_list.append(wall)
+                else:
+                    wall = Wall(x + width / 2, y + height / 2)
+                    self.wall_list.append(wall)
 
         # Пули
         self.bullets = []
 
         # Счёт
-        self.score = 0
-        self.game_over = False
+        if level is None:  # Только при полном рестарте
+            self.score = 0
 
         # Установка фона
         arcade.set_background_color(arcade.color.LIGHT_BLUE)
@@ -318,33 +585,43 @@ class Game(arcade.Window):
         """Отрисовка"""
         self.clear()
 
-        # Стены
-        for wall in self.walls:
-            wall.draw()
+        self.wall_list.draw()
+        self.player_list.draw()
+
+        # Отображаем номер уровня
+        arcade.draw_text(
+            f"Уровень: {self.current_level + 1}",
+            10, SCREEN_HEIGHT - 30,
+            arcade.color.BLACK, 20
+        )
 
         # Враги
         for enemy in self.enemies:
-            if enemy.is_alive:
-                enemy.draw()
+            enemy.draw()
 
         # Пули
         for bullet in self.bullets:
             bullet.draw()
 
         # Игрок
-        if self.player.is_alive:
-            self.player.draw()
+        self.player.draw()
 
         # Интерфейс
         arcade.draw_text(
             f"Счёт: {self.score}",
-            10, SCREEN_HEIGHT - 30,
+            SCREEN_WIDTH - 150, SCREEN_HEIGHT - 30,
             arcade.color.BLACK, 20
         )
 
         arcade.draw_text(
             f"Здоровье: {self.player.health}",
             10, SCREEN_HEIGHT - 60,
+            arcade.color.BLACK, 20
+        )
+
+        arcade.draw_text(
+            f"Врагов осталось: {sum(1 for e in self.enemies if e.is_alive)}",
+            SCREEN_WIDTH - 200, SCREEN_HEIGHT - 60,
             arcade.color.BLACK, 20
         )
 
@@ -356,26 +633,45 @@ class Game(arcade.Window):
 
         # Сообщение о конце игры
         if self.game_over:
-            arcade.draw_rectangle_filled(
-                SCREEN_WIDTH//2, SCREEN_HEIGHT//2,
-                400, 200,
-                arcade.color.WHITE
-            )
+            # Фон сообщения
+            bg_points = [
+                (SCREEN_WIDTH // 2 - 200, SCREEN_HEIGHT // 2 - 100),
+                (SCREEN_WIDTH // 2 + 200, SCREEN_HEIGHT // 2 - 100),
+                (SCREEN_WIDTH // 2 + 200, SCREEN_HEIGHT // 2 + 100),
+                (SCREEN_WIDTH // 2 - 200, SCREEN_HEIGHT // 2 + 100)
+            ]
+            arcade.draw_polygon_filled(bg_points, arcade.color.WHITE)
+
+            # Контур
+            bg_outline = bg_points + [bg_points[0]]
+            arcade.draw_line_strip(bg_outline, arcade.color.BLACK, 2)
+
+            # Текст
             arcade.draw_text(
                 "ИГРА ОКОНЧЕНА!",
-                SCREEN_WIDTH//2, SCREEN_HEIGHT//2 + 40,
+                SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 40,
                 arcade.color.RED, 36,
                 anchor_x="center"
             )
             arcade.draw_text(
                 f"Ваш счёт: {self.score}",
-                SCREEN_WIDTH//2, SCREEN_HEIGHT//2 - 10,
+                SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 10,
                 arcade.color.BLACK, 24,
                 anchor_x="center"
             )
+
+            # Разное сообщение в зависимости от победы/поражения
+            if self.player.is_alive and self.current_level + 1 >= len(self.levels):
+                arcade.draw_text(
+                    "ПОБЕДА! Все уровни пройдены!",
+                    SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 50,
+                    arcade.color.GREEN, 24,
+                    anchor_x="center"
+                )
+
             arcade.draw_text(
                 "Нажмите R для перезапуска",
-                SCREEN_WIDTH//2, SCREEN_HEIGHT//2 - 50,
+                SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 90,
                 arcade.color.BLUE, 20,
                 anchor_x="center"
             )
@@ -383,6 +679,7 @@ class Game(arcade.Window):
     def on_key_press(self, key, modifiers):
         """Нажатие клавиш"""
         if self.game_over and key == arcade.key.R:
+            self.current_level = 0
             self.setup()
             return
 
@@ -397,7 +694,8 @@ class Game(arcade.Window):
             self.player.rotate_right = True
         elif key == arcade.key.SPACE:
             # Стрельба
-            if self.total_time - self.player.last_shot > self.player.shoot_cooldown:
+            if (self.player.is_alive and
+                    self.total_time - self.player.last_shot > self.player.shoot_cooldown):
                 bullet = Bullet(
                     self.player.center_x + math.cos(math.radians(self.player.angle)) * 20,
                     self.player.center_y + math.sin(math.radians(self.player.angle)) * 20,
@@ -407,8 +705,8 @@ class Game(arcade.Window):
                 self.bullets.append(bullet)
                 self.player.last_shot = self.total_time
         elif key == arcade.key.R:
-            # Рестарт
-            self.setup()
+            # Рестарт текущего уровня
+            self.setup(self.current_level)
         elif key == arcade.key.ESCAPE:
             # Выход
             arcade.close_window()
@@ -427,15 +725,18 @@ class Game(arcade.Window):
     def enemy_ai(self, enemy, delta_time):
         """Искусственный интеллект врага"""
         if not enemy.is_alive:
+            enemy.move_forward = False
+            enemy.rotate_left = False
+            enemy.rotate_right = False
             return
 
         # Расстояние до игрока
         dx = self.player.center_x - enemy.center_x
         dy = self.player.center_y - enemy.center_y
-        distance = math.sqrt(dx*dx + dy*dy)
+        distance = math.sqrt(dx * dx + dy * dy)
 
         # Поворот к игроку
-        if distance > 0:
+        if distance > 0 and self.player.is_alive:
             target_angle = math.degrees(math.atan2(dy, dx))
 
             # Плавный поворот к цели
@@ -443,23 +744,20 @@ class Game(arcade.Window):
             if angle_diff > 180:
                 angle_diff -= 360
 
-            if angle_diff > 5:
-                enemy.rotate_left = True
-                enemy.rotate_right = False
-            elif angle_diff < -5:
-                enemy.rotate_right = True
-                enemy.rotate_left = False
-            else:
-                enemy.rotate_left = False
-                enemy.rotate_right = False
+            enemy.rotate_left = angle_diff > 5
+            enemy.rotate_right = angle_diff < -5
 
-            # Движение
-            enemy.move_forward = distance > 50 and distance < 400
+            # Движение только если игрок не слишком близко
+            enemy.move_forward = 100 < distance < 300
 
-            # Стрельба
+            # Стрельба только при прямой видимости
             if (distance < enemy.shoot_range and
-                self.total_time - enemy.last_shot > enemy.shoot_cooldown and
-                abs(angle_diff) < 15):
+                    self.total_time - enemy.last_shot > enemy.shoot_cooldown and
+                    abs(angle_diff) < 15 and
+                    self.collision_manager.check_line_of_sight(
+                        enemy.center_x, enemy.center_y,
+                        self.player.center_x, self.player.center_y,
+                        self.wall_list)):
                 # Выстрел
                 bullet = Bullet(
                     enemy.center_x + math.cos(math.radians(enemy.angle)) * 20,
@@ -472,16 +770,30 @@ class Game(arcade.Window):
 
     def check_collision_bullet_wall(self, bullet):
         """Проверка столкновения пули со стеной"""
-        for wall in self.walls:
-            wall_left = wall.center_x - wall.width/2
-            wall_right = wall.center_x + wall.width/2
-            wall_bottom = wall.center_y - wall.height/2
-            wall_top = wall.center_y + wall.height/2
+        for wall in self.wall_list:
+            wall_left = wall.center_x - wall.width / 2
+            wall_right = wall.center_x + wall.width / 2
+            wall_bottom = wall.center_y - wall.height / 2
+            wall_top = wall.center_y + wall.height / 2
 
             if (wall_left <= bullet.center_x <= wall_right and
-                wall_bottom <= bullet.center_y <= wall_top):
+                    wall_bottom <= bullet.center_y <= wall_top):
                 return True
         return False
+
+    def check_collision_bullet_tank(self, bullet, tank):
+        """Проверка столкновения пули с танком"""
+        if not tank.is_alive:
+            return False
+
+        # Проверяем расстояние от центра пули до центра танка
+        dx = bullet.center_x - tank.center_x
+        dy = bullet.center_y - tank.center_y
+        distance = math.sqrt(dx * dx + dy * dy)
+
+        # Используем упрощенную проверку - круг вокруг танка
+        tank_radius = max(tank.width, tank.height) / 2
+        return distance < (tank_radius + bullet.radius)
 
     def on_update(self, delta_time):
         """Обновление игры"""
@@ -490,18 +802,23 @@ class Game(arcade.Window):
 
         self.total_time += delta_time
 
-        # Обновление игрока
-        self.player.update(delta_time)
-        # Проверка столкновений игрока со стенами
-        self.player.check_wall_collision(self.walls)
+        # Обновление игрока с передачей стен для проверки столкновений
+        if self.player.is_alive:
+            self.player.update(delta_time, self.wall_list)
+
+            # Не даем игроку выйти за границы экрана
+            self.player.center_x = max(20, min(SCREEN_WIDTH - 20, self.player.center_x))
+            self.player.center_y = max(20, min(SCREEN_HEIGHT - 20, self.player.center_y))
 
         # Обновление врагов
         for enemy in self.enemies:
+            self.enemy_ai(enemy, delta_time)
             if enemy.is_alive:
-                self.enemy_ai(enemy, delta_time)
-                enemy.update(delta_time)
-                # Проверка столкновений врагов со стенами
-                enemy.check_wall_collision(self.walls)
+                enemy.update(delta_time, self.wall_list)
+
+                # Не даем врагам выйти за границы экрана
+                enemy.center_x = max(20, min(SCREEN_WIDTH - 20, enemy.center_x))
+                enemy.center_y = max(20, min(SCREEN_HEIGHT - 20, enemy.center_y))
 
         # Обновление пуль
         bullets_to_remove = []
@@ -518,26 +835,17 @@ class Game(arcade.Window):
             # Столкновения пуль игрока с врагами
             if bullet.is_player_bullet:
                 for enemy in self.enemies:
-                    if enemy.is_alive:
-                        dx = bullet.center_x - enemy.center_x
-                        dy = bullet.center_y - enemy.center_y
-                        distance = math.sqrt(dx*dx + dy*dy)
-
-                        if distance < (enemy.width/2 + bullet.radius):
-                            bullets_to_remove.append(bullet)
-                            enemy.health -= 25
-                            if enemy.health <= 0:
-                                enemy.is_alive = False
-                                self.score += 100
-                            break
+                    if enemy.is_alive and self.check_collision_bullet_tank(bullet, enemy):
+                        bullets_to_remove.append(bullet)
+                        enemy.health -= 25
+                        if enemy.health <= 0:
+                            enemy.is_alive = False
+                            self.score += 100
+                        break
 
             # Столкновения пуль врагов с игроком
-            elif not bullet.is_player_bullet and self.player.is_alive:
-                dx = bullet.center_x - self.player.center_x
-                dy = bullet.center_y - self.player.center_y
-                distance = math.sqrt(dx*dx + dy*dy)
-
-                if distance < (self.player.width/2 + bullet.radius):
+            elif not bullet.is_player_bullet:
+                if self.player.is_alive and self.check_collision_bullet_tank(bullet, self.player):
                     bullets_to_remove.append(bullet)
                     self.player.health -= 20
                     if self.player.health <= 0:
@@ -550,16 +858,28 @@ class Game(arcade.Window):
             if bullet in self.bullets:
                 self.bullets.remove(bullet)
 
-        # Проверка победы
-        if not self.game_over:
+        # Проверка победы на уровне
+        if not self.game_over and self.player.is_alive:
             all_enemies_dead = all(not enemy.is_alive for enemy in self.enemies)
             if all_enemies_dead:
-                self.game_over = True
+                self.score += 500  # Бонус за завершение уровня
+
+                # Переход на следующий уровень
+                if self.current_level + 1 < len(self.levels):
+                    self.current_level += 1
+                    self.setup(self.current_level)
+                    print(f"Переход на уровень {self.current_level + 1}")
+                else:
+                    # Все уровни пройдены
+                    self.game_over = True
+                    print("Поздравляем! Все уровни пройдены!")
+
 
 def main():
     """Запуск игры"""
     window = Game()
     arcade.run()
+
 
 if __name__ == "__main__":
     main()
