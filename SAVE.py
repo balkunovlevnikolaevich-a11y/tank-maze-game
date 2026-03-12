@@ -1,885 +1,310 @@
-import arcade
-import math
+import pygame
+import sys
 import random
-from typing import List, Tuple
-
-# Настройки экрана
-SCREEN_WIDTH = 800
-SCREEN_HEIGHT = 600
-SCREEN_TITLE = "Tank Maze Physics"
 
 
-class CollisionManager:
-    """Класс для управления всеми столкновениями в игре"""
+# ==========================================
+# МОДУЛЬ 1: НАСТРОЙКИ (CONFIG)
+# ==========================================
+class Config:
+    WIDTH = 800
+    HEIGHT = 600
+    FPS = 60
 
-    @staticmethod
-    def check_point_in_rect(point_x: float, point_y: float,
-                            rect_center_x: float, rect_center_y: float,
-                            rect_width: float, rect_height: float) -> bool:
-        """Проверка, находится ли точка внутри прямоугольника"""
-        left = rect_center_x - rect_width / 2
-        right = rect_center_x + rect_width / 2
-        bottom = rect_center_y - rect_height / 2
-        top = rect_center_y + rect_height / 2
+    # Состояния игры
+    STATE_MENU = 0
+    STATE_PLAYING = 1
+    STATE_GAME_OVER = 2
 
-        return (left <= point_x <= right and bottom <= point_y <= top)
+    # Физика и управление
+    GRAVITY = 0.8
+    PLAYER_SPEED = 7
+    JUMP_POWER = -16
+    FRICTION = 0.8
 
-    @staticmethod
-    def check_circle_rect_collision(circle_x: float, circle_y: float, circle_radius: float,
-                                    rect_center_x: float, rect_center_y: float,
-                                    rect_width: float, rect_height: float) -> bool:
-        """Проверка столкновения круга с прямоугольником"""
-        # Находим ближайшую точку прямоугольника к кругу
-        closest_x = max(rect_center_x - rect_width / 2, min(circle_x, rect_center_x + rect_width / 2))
-        closest_y = max(rect_center_y - rect_height / 2, min(circle_y, rect_center_y + rect_height / 2))
-
-        # Вычисляем расстояние от круга до ближайшей точки
-        distance_x = circle_x - closest_x
-        distance_y = circle_y - closest_y
-
-        # Проверяем, меньше ли расстояние, чем радиус круга
-        return (distance_x ** 2 + distance_y ** 2) <= (circle_radius ** 2)
-
-    @staticmethod
-    def get_rotated_rect_bounds(center_x: float, center_y: float, width: float, height: float,
-                                angle: float) -> List[Tuple[float, float]]:
-        """Получить координаты углов повернутого прямоугольника"""
-        half_width = width / 2
-        half_height = height / 2
-
-        # Углы неповернутого прямоугольника
-        corners = [
-            (-half_width, -half_height),
-            (half_width, -half_height),
-            (half_width, half_height),
-            (-half_width, half_height)
-        ]
-
-        # Поворачиваем углы
-        angle_rad = math.radians(angle)
-        cos_a = math.cos(angle_rad)
-        sin_a = math.sin(angle_rad)
-
-        rotated_corners = []
-        for x, y in corners:
-            x_rot = x * cos_a - y * sin_a + center_x
-            y_rot = x * sin_a + y * cos_a + center_y
-            rotated_corners.append((x_rot, y_rot))
-
-        return rotated_corners
-
-    @staticmethod
-    def check_rotated_rect_collision(rect1_corners: List[Tuple[float, float]],
-                                     rect2_center_x: float, rect2_center_y: float,
-                                     rect2_width: float, rect2_height: float) -> Tuple[bool, float, float]:
-        """Проверка столкновения повернутого прямоугольника с обычным и возврат вектора нормали"""
-        # Проверяем столкновение углов повернутого прямоугольника со вторым прямоугольником
-        collision = False
-        collision_normal_x = 0
-        collision_normal_y = 0
-
-        for corner_x, corner_y in rect1_corners:
-            if CollisionManager.check_point_in_rect(corner_x, corner_y,
-                                                    rect2_center_x, rect2_center_y,
-                                                    rect2_width, rect2_height):
-                collision = True
-                # Вычисляем нормаль от стены
-                wall_left = rect2_center_x - rect2_width / 2
-                wall_right = rect2_center_x + rect2_width / 2
-                wall_bottom = rect2_center_y - rect2_height / 2
-                wall_top = rect2_center_y + rect2_height / 2
-
-                # Находим ближайшую сторону
-                dist_left = abs(corner_x - wall_left)
-                dist_right = abs(corner_x - wall_right)
-                dist_bottom = abs(corner_y - wall_bottom)
-                dist_top = abs(corner_y - wall_top)
-
-                min_dist = min(dist_left, dist_right, dist_bottom, dist_top)
-
-                if min_dist == dist_left:
-                    collision_normal_x = -1
-                elif min_dist == dist_right:
-                    collision_normal_x = 1
-                elif min_dist == dist_bottom:
-                    collision_normal_y = -1
-                else:
-                    collision_normal_y = 1
-
-                break
-
-        return collision, collision_normal_x, collision_normal_y
-
-    @staticmethod
-    def check_line_of_sight(point1_x: float, point1_y: float,
-                            point2_x: float, point2_y: float,
-                            walls: list, step: int = 20) -> bool:
-        """Проверка прямой видимости между двумя точками (нет стен на пути)"""
-        # Проверяем несколько точек вдоль линии между двумя точками
-        for i in range(step + 1):
-            t = i / step
-            check_x = point1_x + (point2_x - point1_x) * t
-            check_y = point1_y + (point2_y - point1_y) * t
-
-            for wall in walls:
-                if CollisionManager.check_point_in_rect(check_x, check_y,
-                                                        wall.center_x, wall.center_y,
-                                                        wall.width, wall.height):
-                    return False
-        return True
+    # Цвета (RGB)
+    SKY_COLOR = (135, 206, 235)
+    DIRT_COLOR = (139, 69, 19)
+    GRASS_COLOR = (50, 200, 50)
+    PLAYER_COLOR = (220, 20, 60)
+    LAVA_COLOR = (255, 69, 0)
+    COIN_COLOR = (255, 215, 0)
+    MOUNTAIN_COLOR = (100, 150, 180)
+    CLOUD_COLOR = (255, 255, 255)
 
 
-class Tank:
-    """Класс танка"""
+# ==========================================
+# МОДУЛЬ 2: ИГРОК
+# ==========================================
+class Player(pygame.sprite.Sprite):
+    def __init__(self, x, y):
+        super().__init__()
+        self.image = pygame.Surface((30, 40), pygame.SRCALPHA)
+        self.rect = self.image.get_rect(topleft=(x, y))
 
-    def __init__(self, x, y, is_player=True):
-        self.center_x = x
-        self.center_y = y
-        self.width = 30
-        self.height = 30
-        self.angle = 0
+        self.vel_x = 0
+        self.vel_y = 0
+        self.on_ground = False
+        self.is_dead = False
+        self.facing_right = True
 
-        # Цвета
-        if is_player:
-            self.color = arcade.color.GREEN
+        self.draw_character()
+
+    def draw_character(self):
+        self.image.fill(pygame.SRCALPHA)
+        pygame.draw.rect(self.image, Config.PLAYER_COLOR, (0, 0, 30, 40), border_radius=8)
+
+        eye_color = (255, 255, 255)
+        pupil_color = (0, 0, 0)
+        if self.facing_right:
+            pygame.draw.circle(self.image, eye_color, (20, 12), 4)
+            pygame.draw.circle(self.image, pupil_color, (22, 12), 2)
         else:
-            self.color = arcade.color.RED
+            pygame.draw.circle(self.image, eye_color, (10, 12), 4)
+            pygame.draw.circle(self.image, pupil_color, (8, 12), 2)
 
-        # Физика
-        self.velocity_x = 0
-        self.velocity_y = 0
-        self.acceleration = 500
-        self.friction = 0.95
-        self.max_speed = 200
-
-        # Управление
-        self.move_forward = False
-        self.move_backward = False
-        self.rotate_left = False
-        self.rotate_right = False
-
-        # Стрельба
-        self.is_player = is_player
-        self.is_alive = True
-        self.health = 100
-        self.last_shot = 0
-        self.shoot_cooldown = 0.5 if is_player else 1.5
-        self.shoot_range = 300
-
-    def draw(self):
-        """Отрисовка танка"""
-        if not self.is_alive:
+    def handle_keys(self):
+        if self.is_dead:
             return
 
-        # Создаем точки для корпуса танка
-        half_width = self.width / 2
-        half_height = self.height / 2
+        keys = pygame.key.get_pressed()
 
-        # Углы прямоугольника
-        corners = [
-            (-half_width, -half_height),
-            (half_width, -half_height),
-            (half_width, half_height),
-            (-half_width, half_height)
-        ]
+        if keys[pygame.K_a]:
+            self.vel_x = -Config.PLAYER_SPEED
+            if self.facing_right:
+                self.facing_right = False
+                self.draw_character()
+        elif keys[pygame.K_d]:
+            self.vel_x = Config.PLAYER_SPEED
+            if not self.facing_right:
+                self.facing_right = True
+                self.draw_character()
+        else:
+            self.vel_x *= Config.FRICTION
 
-        # Применяем поворот
-        angle_rad = math.radians(self.angle)
-        cos_a = math.cos(angle_rad)
-        sin_a = math.sin(angle_rad)
+        if (keys[pygame.K_w] or keys[pygame.K_SPACE]) and self.on_ground:
+            self.vel_y = Config.JUMP_POWER
+            self.on_ground = False
 
-        rotated_corners = []
-        for x, y in corners:
-            # Поворот
-            x_rot = x * cos_a - y * sin_a
-            y_rot = x * sin_a + y * cos_a
-            # Сдвиг
-            rotated_corners.append((
-                self.center_x + x_rot,
-                self.center_y + y_rot
-            ))
+    def update(self, platforms, lavas):
+        self.handle_keys()
+        self.vel_y += Config.GRAVITY
 
-        # Рисуем корпус
-        arcade.draw_polygon_filled(rotated_corners, self.color)
+        self.rect.x += self.vel_x
+        self.check_collisions(platforms, 'x')
 
-        # Рисуем контур
-        outline_points = rotated_corners + [rotated_corners[0]]
-        arcade.draw_line_strip(outline_points, arcade.color.BLACK, 2)
+        self.rect.y += self.vel_y
+        self.check_collisions(platforms, 'y')
 
-        # Дуло
-        barrel_length = self.width * 0.8
-        barrel_end_x = self.center_x + math.cos(math.radians(self.angle)) * barrel_length
-        barrel_end_y = self.center_y + math.sin(math.radians(self.angle)) * barrel_length
+        if self.rect.y > Config.HEIGHT + 200 or pygame.sprite.spritecollideany(self, lavas):
+            self.is_dead = True
 
-        arcade.draw_line(
-            self.center_x, self.center_y,
-            barrel_end_x, barrel_end_y,
-            arcade.color.BLACK, 3
-        )
-
-        # Полоска здоровья для врагов
-        if not self.is_player and self.is_alive:
-            health_width = 30
-            health_height = 5
-            health_x = self.center_x
-            health_y = self.center_y + 25
-
-            # Фон полоски здоровья (красный)
-            health_bg_points = [
-                (health_x - health_width / 2, health_y - health_height / 2),
-                (health_x + health_width / 2, health_y - health_height / 2),
-                (health_x + health_width / 2, health_y + health_height / 2),
-                (health_x - health_width / 2, health_y + health_height / 2)
-            ]
-            arcade.draw_polygon_filled(health_bg_points, arcade.color.RED)
-
-            # Текущее здоровье (зеленый)
-            health_percent = max(0, self.health / 100)
-            current_width = health_width * health_percent
-            if current_width > 0:
-                health_fg_points = [
-                    (health_x - health_width / 2, health_y - health_height / 2),
-                    (health_x - health_width / 2 + current_width, health_y - health_height / 2),
-                    (health_x - health_width / 2 + current_width, health_y + health_height / 2),
-                    (health_x - health_width / 2, health_y + health_height / 2)
-                ]
-                arcade.draw_polygon_filled(health_fg_points, arcade.color.GREEN)
-
-    def update(self, delta_time, walls):
-        """Обновление движения с проверкой столкновений"""
-        if not self.is_alive:
-            return
-
-        # Сохраняем предыдущую позицию
-        prev_x = self.center_x
-        prev_y = self.center_y
-
-        # Ускорение
-        acceleration_x = 0
-        acceleration_y = 0
-
-        if self.move_forward:
-            acceleration_x += math.cos(math.radians(self.angle))
-            acceleration_y += math.sin(math.radians(self.angle))
-        if self.move_backward:
-            acceleration_x -= math.cos(math.radians(self.angle)) * 0.7
-            acceleration_y -= math.sin(math.radians(self.angle)) * 0.7
-
-        # Поворот
-        if self.rotate_left:
-            self.angle += 180 * delta_time
-        if self.rotate_right:
-            self.angle -= 180 * delta_time
-
-        # Нормализация
-        length = math.hypot(acceleration_x, acceleration_y)
-        if length > 0:
-            acceleration_x = (acceleration_x / length) * self.acceleration * delta_time
-            acceleration_y = (acceleration_y / length) * self.acceleration * delta_time
-
-        # Обновление скорости
-        self.velocity_x += acceleration_x
-        self.velocity_y += acceleration_y
-
-        # Ограничение скорости
-        speed = math.sqrt(self.velocity_x ** 2 + self.velocity_y ** 2)
-        if speed > self.max_speed:
-            scale = self.max_speed / speed
-            self.velocity_x *= scale
-            self.velocity_y *= scale
-
-        # Трение
-        self.velocity_x *= self.friction
-        self.velocity_y *= self.friction
-
-        # Движение
-        self.center_x += self.velocity_x * delta_time
-        self.center_y += self.velocity_y * delta_time
-
-        # Проверка столкновений со стенами
-        collision = self.check_wall_collision(walls)
-
-        # Если есть столкновение, возвращаемся к предыдущей позиции и останавливаемся
-        if collision:
-            self.center_x = prev_x
-            self.center_y = prev_y
-            self.velocity_x = 0
-            self.velocity_y = 0
-
-    def get_corners(self):
-        """Получить координаты углов танка"""
-        half_width = self.width / 2
-        half_height = self.height / 2
-
-        corners = [
-            (-half_width, -half_height),
-            (half_width, -half_height),
-            (half_width, half_height),
-            (-half_width, half_height)
-        ]
-
-        angle_rad = math.radians(self.angle)
-        cos_a = math.cos(angle_rad)
-        sin_a = math.sin(angle_rad)
-
-        rotated_corners = []
-        for x, y in corners:
-            x_rot = x * cos_a - y * sin_a + self.center_x
-            y_rot = x * sin_a + y * cos_a + self.center_y
-            rotated_corners.append((x_rot, y_rot))
-
-        return rotated_corners
-
-    def check_wall_collision(self, walls):
-        """Проверка столкновений со стенами"""
-        if not self.is_alive:
-            return False
-
-        # Получаем углы танка
-        corners = self.get_corners()
-
-        # Проверяем столкновение с каждой стеной
-        for wall in walls:
-            # Получаем границы стены
-            wall_left = wall.center_x - wall.width / 2
-            wall_right = wall.center_x + wall.width / 2
-            wall_bottom = wall.center_y - wall.height / 2
-            wall_top = wall.center_y + wall.height / 2
-
-            # Проверяем каждый угол танка
-            for corner_x, corner_y in corners:
-                if (wall_left <= corner_x <= wall_right and
-                        wall_bottom <= corner_y <= wall_top):
-                    return True
-
-        return False
+    def check_collisions(self, platforms, axis):
+        for platform in platforms:
+            if self.rect.colliderect(platform.rect):
+                if axis == 'x':
+                    if self.vel_x > 0:
+                        self.rect.right = platform.rect.left
+                    elif self.vel_x < 0:
+                        self.rect.left = platform.rect.right
+                    self.vel_x = 0
+                elif axis == 'y':
+                    if self.vel_y > 0:
+                        self.rect.bottom = platform.rect.top
+                        self.on_ground = True
+                    elif self.vel_y < 0:
+                        self.rect.top = platform.rect.bottom
+                    self.vel_y = 0
 
 
-class Bullet:
-    """Класс пули"""
-
-    def __init__(self, x, y, angle, is_player_bullet=True):
-        self.center_x = x
-        self.center_y = y
-        self.radius = 5
-        self.color = arcade.color.YELLOW if is_player_bullet else arcade.color.ORANGE
-        self.velocity_x = math.cos(math.radians(angle)) * 400
-        self.velocity_y = math.sin(math.radians(angle)) * 400
-        self.lifetime = 2.0
-        self.time_alive = 0
-        self.is_player_bullet = is_player_bullet
-
-    def draw(self):
-        arcade.draw_circle_filled(
-            self.center_x, self.center_y,
-            self.radius, self.color
-        )
-
-    def update(self, delta_time):
-        self.time_alive += delta_time
-        self.center_x += self.velocity_x * delta_time
-        self.center_y += self.velocity_y * delta_time
-
-        # Проверка выхода за границы
-        if (self.center_x < 0 or self.center_x > SCREEN_WIDTH or
-                self.center_y < 0 or self.center_y > SCREEN_HEIGHT or
-                self.time_alive > self.lifetime):
-            return False
-        return True
+# ==========================================
+# МОДУЛЬ 3: ОБЪЕКТЫ
+# ==========================================
+class Platform(pygame.sprite.Sprite):
+    def __init__(self, x, y, width, height):
+        super().__init__()
+        self.image = pygame.Surface((width, height))
+        self.image.fill(Config.DIRT_COLOR)
+        pygame.draw.rect(self.image, Config.GRASS_COLOR, (0, 0, width, 15))
+        pygame.draw.rect(self.image, (30, 150, 30), (0, 15, width, 5))
+        self.rect = self.image.get_rect(topleft=(x, y))
 
 
-class Wall(arcade.SpriteSolidColor):
-    """Класс стены"""
-
-    def __init__(self, x, y, width=20, height=20):
-        super().__init__(width, height, arcade.color.GRAY)
-        self.center_x = x
-        self.center_y = y
-
-    def draw(self):
-        """Отрисовка стены (переопределяем для контура)"""
-        # Вызываем метод родителя для заливки
-        super().draw()
-
-        # Добавляем контур
-        left = self.center_x - self.width / 2
-        right = self.center_x + self.width / 2
-        bottom = self.center_y - self.height / 2
-        top = self.center_y + self.height / 2
-
-        points = [
-            (left, bottom),
-            (right, bottom),
-            (right, top),
-            (left, top),
-            (left, bottom)  # Замыкаем контур
-        ]
-
-        arcade.draw_line_strip(points, arcade.color.BLACK, 2)
+class Lava(pygame.sprite.Sprite):
+    def __init__(self, x, y, width, height):
+        super().__init__()
+        self.image = pygame.Surface((width, height))
+        self.image.fill(Config.LAVA_COLOR)
+        for _ in range(width // 20):
+            px = random.randint(0, width - 10)
+            py = random.randint(5, 15)
+            pygame.draw.circle(self.image, (255, 165, 0), (px, py), 4)
+        self.rect = self.image.get_rect(topleft=(x, y))
 
 
-class Game(arcade.Window):
-    """Главное окно игры"""
+class Coin(pygame.sprite.Sprite):
+    def __init__(self, x, y):
+        super().__init__()
+        self.image = pygame.Surface((24, 24), pygame.SRCALPHA)
+        pygame.draw.circle(self.image, Config.COIN_COLOR, (12, 12), 12)
+        pygame.draw.circle(self.image, (218, 165, 32), (12, 12), 8, 2)
+        self.rect = self.image.get_rect(center=(x, y))
 
+
+# ==========================================
+# МОДУЛЬ 4: ИГРА И UI
+# ==========================================
+class Game:
     def __init__(self):
-        super().__init__(SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_TITLE)
-
-        # Игровые объекты
-        self.player = None
-        self.enemies = []
-        self.bullets = []
-        self.current_level = 0
-        self.levels = []  # Здесь будут храниться все уровни
-        self.level_enemies = []  # Враги для каждого уровня
-
-        self.setup_levels()
-
-        # Спрайтовые списки
-        self.wall_list = None
-        self.player_list = None
-        self.player = None
-
-        # Время
-        self.total_time = 0
-
-        # Менеджер столкновений
-        self.collision_manager = CollisionManager()
-
-        # Инициализация
-        self.setup()
-
-    def setup_levels(self):
-        """Создаем несколько уровней с разными врагами"""
-
-        # Уровень 1 - обучающий
-        level1 = [
-            # Границы экрана
-            (100, 100, 600, 20),  # нижняя стена
-            (100, 500, 600, 20),  # верхняя стена
-            (100, 100, 20, 400),  # левая стена
-            (680, 100, 20, 400),  # правая стена
-
-            # Препятствия
-            (200, 200, 100, 20),
-            (400, 300, 20, 100),
-            (300, 400, 150, 20),
-        ]
-
-        # Враги для уровня 1
-        enemies1 = [
-            (600, 500),  # 1 враг
-        ]
-
-        # Уровень 2 (сложнее)
-        level2 = [
-            # Границы
-            (50, 50, 700, 20),
-            (50, 550, 700, 20),
-            (50, 50, 20, 500),
-            (730, 50, 20, 500),
-
-            # Лабиринт
-            (150, 150, 20, 200),
-            (150, 350, 200, 20),
-            (350, 250, 20, 150),
-            (250, 450, 150, 20),
-            (450, 150, 20, 250),
-            (550, 300, 150, 20),
-            (650, 150, 20, 150),
-        ]
-
-        # Враги для уровня 2
-        enemies2 = [
-            (200, 250),
-            (500, 400),
-            (650, 200),
-        ]
-
-        # Уровень 3 - сложный
-        level3 = [
-            # Границы
-            (50, 50, 700, 20),
-            (50, 550, 700, 20),
-            (50, 50, 20, 500),
-            (730, 50, 20, 500),
-
-            # Крест из стен
-            (300, 200, 200, 20),
-            (400, 100, 20, 200),
-            (300, 400, 200, 20),
-            (400, 400, 20, 200),
-
-            # Дополнительные препятствия
-            (100, 300, 150, 20),
-            (550, 300, 150, 20),
-        ]
-
-        # Враги для уровня 3
-        enemies3 = [
-            (150, 150),
-            (650, 150),
-            (400, 300),
-            (150, 450),
-            (650, 450),
-        ]
-
-        # Сохраняем все уровни
-        self.levels = [level1, level2, level3]
-        self.level_enemies = [enemies1, enemies2, enemies3]
-
-    def setup(self, level=None):
-        """Настройка игры"""
-        if level is not None:
-            self.current_level = level
-
-        # Сброс состояния игры
-        self.game_over = False
-
-        # Игрок
-        self.player = Tank(200, 150, is_player=True)
-        self.player.health = 100  # Восстанавливаем здоровье при новом уровне
-
-        # Враги для текущего уровня
-        self.enemies = []
-        if self.current_level < len(self.level_enemies):
-            for x, y in self.level_enemies[self.current_level]:
-                enemy = Tank(x, y, is_player=False)
-                # Разные характеристики для врагов на разных уровнях
-                if self.current_level == 2:  # Сложный уровень
-                    enemy.health = 150
-                    enemy.shoot_cooldown = 1.0
-                self.enemies.append(enemy)
-
-        # Очищаем списки
-        self.wall_list = arcade.SpriteList()
-        self.player_list = arcade.SpriteList()
-
-        # Создаем стены для текущего уровня
-        if self.current_level < len(self.levels):
-            level_data = self.levels[self.current_level]
-
-            for wall_data in level_data:
-                x, y, width, height = wall_data
-                # Создаем несколько спрайтов для больших стен
-                if width > 20 or height > 20:
-                    # Для больших стен создаем несколько блоков
-                    for i in range(0, width, 20):
-                        for j in range(0, height, 20):
-                            wall = Wall(x + i + 10, y + j + 10)
-                            self.wall_list.append(wall)
-                else:
-                    wall = Wall(x + width / 2, y + height / 2)
-                    self.wall_list.append(wall)
-
-        # Пули
-        self.bullets = []
-
-        # Счёт
-        if level is None:  # Только при полном рестарте
-            self.score = 0
-
-        # Установка фона
-        arcade.set_background_color(arcade.color.LIGHT_BLUE)
-
-    def on_draw(self):
-        """Отрисовка"""
-        self.clear()
-
-        self.wall_list.draw()
-        self.player_list.draw()
-
-        # Отображаем номер уровня
-        arcade.draw_text(
-            f"Уровень: {self.current_level + 1}",
-            10, SCREEN_HEIGHT - 30,
-            arcade.color.BLACK, 20
-        )
-
-        # Враги
-        for enemy in self.enemies:
-            enemy.draw()
-
-        # Пули
-        for bullet in self.bullets:
-            bullet.draw()
-
-        # Игрок
-        self.player.draw()
-
-        # Интерфейс
-        arcade.draw_text(
-            f"Счёт: {self.score}",
-            SCREEN_WIDTH - 150, SCREEN_HEIGHT - 30,
-            arcade.color.BLACK, 20
-        )
-
-        arcade.draw_text(
-            f"Здоровье: {self.player.health}",
-            10, SCREEN_HEIGHT - 60,
-            arcade.color.BLACK, 20
-        )
-
-        arcade.draw_text(
-            f"Врагов осталось: {sum(1 for e in self.enemies if e.is_alive)}",
-            SCREEN_WIDTH - 200, SCREEN_HEIGHT - 60,
-            arcade.color.BLACK, 20
-        )
-
-        arcade.draw_text(
-            "WASD - движение, ПРОБЕЛ - стрельба, R - рестарт",
-            10, 10,
-            arcade.color.BLACK, 16
-        )
-
-        # Сообщение о конце игры
-        if self.game_over:
-            # Фон сообщения
-            bg_points = [
-                (SCREEN_WIDTH // 2 - 200, SCREEN_HEIGHT // 2 - 100),
-                (SCREEN_WIDTH // 2 + 200, SCREEN_HEIGHT // 2 - 100),
-                (SCREEN_WIDTH // 2 + 200, SCREEN_HEIGHT // 2 + 100),
-                (SCREEN_WIDTH // 2 - 200, SCREEN_HEIGHT // 2 + 100)
-            ]
-            arcade.draw_polygon_filled(bg_points, arcade.color.WHITE)
-
-            # Контур
-            bg_outline = bg_points + [bg_points[0]]
-            arcade.draw_line_strip(bg_outline, arcade.color.BLACK, 2)
-
-            # Текст
-            arcade.draw_text(
-                "ИГРА ОКОНЧЕНА!",
-                SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 40,
-                arcade.color.RED, 36,
-                anchor_x="center"
-            )
-            arcade.draw_text(
-                f"Ваш счёт: {self.score}",
-                SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 10,
-                arcade.color.BLACK, 24,
-                anchor_x="center"
-            )
-
-            # Разное сообщение в зависимости от победы/поражения
-            if self.player.is_alive and self.current_level + 1 >= len(self.levels):
-                arcade.draw_text(
-                    "ПОБЕДА! Все уровни пройдены!",
-                    SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 50,
-                    arcade.color.GREEN, 24,
-                    anchor_x="center"
-                )
-
-            arcade.draw_text(
-                "Нажмите R для перезапуска",
-                SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 90,
-                arcade.color.BLUE, 20,
-                anchor_x="center"
-            )
-
-    def on_key_press(self, key, modifiers):
-        """Нажатие клавиш"""
-        if self.game_over and key == arcade.key.R:
-            self.current_level = 0
-            self.setup()
-            return
-
-        # Управление игроком
-        if key == arcade.key.W or key == arcade.key.UP:
-            self.player.move_forward = True
-        elif key == arcade.key.S or key == arcade.key.DOWN:
-            self.player.move_backward = True
-        elif key == arcade.key.A or key == arcade.key.LEFT:
-            self.player.rotate_left = True
-        elif key == arcade.key.D or key == arcade.key.RIGHT:
-            self.player.rotate_right = True
-        elif key == arcade.key.SPACE:
-            # Стрельба
-            if (self.player.is_alive and
-                    self.total_time - self.player.last_shot > self.player.shoot_cooldown):
-                bullet = Bullet(
-                    self.player.center_x + math.cos(math.radians(self.player.angle)) * 20,
-                    self.player.center_y + math.sin(math.radians(self.player.angle)) * 20,
-                    self.player.angle,
-                    is_player_bullet=True
-                )
-                self.bullets.append(bullet)
-                self.player.last_shot = self.total_time
-        elif key == arcade.key.R:
-            # Рестарт текущего уровня
-            self.setup(self.current_level)
-        elif key == arcade.key.ESCAPE:
-            # Выход
-            arcade.close_window()
-
-    def on_key_release(self, key, modifiers):
-        """Отпускание клавиш"""
-        if key == arcade.key.W or key == arcade.key.UP:
-            self.player.move_forward = False
-        elif key == arcade.key.S or key == arcade.key.DOWN:
-            self.player.move_backward = False
-        elif key == arcade.key.A or key == arcade.key.LEFT:
-            self.player.rotate_left = False
-        elif key == arcade.key.D or key == arcade.key.RIGHT:
-            self.player.rotate_right = False
-
-    def enemy_ai(self, enemy, delta_time):
-        """Искусственный интеллект врага"""
-        if not enemy.is_alive:
-            enemy.move_forward = False
-            enemy.rotate_left = False
-            enemy.rotate_right = False
-            return
-
-        # Расстояние до игрока
-        dx = self.player.center_x - enemy.center_x
-        dy = self.player.center_y - enemy.center_y
-        distance = math.sqrt(dx * dx + dy * dy)
-
-        # Поворот к игроку
-        if distance > 0 and self.player.is_alive:
-            target_angle = math.degrees(math.atan2(dy, dx))
-
-            # Плавный поворот к цели
-            angle_diff = (target_angle - enemy.angle) % 360
-            if angle_diff > 180:
-                angle_diff -= 360
-
-            enemy.rotate_left = angle_diff > 5
-            enemy.rotate_right = angle_diff < -5
-
-            # Движение только если игрок не слишком близко
-            enemy.move_forward = 100 < distance < 300
-
-            # Стрельба только при прямой видимости
-            if (distance < enemy.shoot_range and
-                    self.total_time - enemy.last_shot > enemy.shoot_cooldown and
-                    abs(angle_diff) < 15 and
-                    self.collision_manager.check_line_of_sight(
-                        enemy.center_x, enemy.center_y,
-                        self.player.center_x, self.player.center_y,
-                        self.wall_list)):
-                # Выстрел
-                bullet = Bullet(
-                    enemy.center_x + math.cos(math.radians(enemy.angle)) * 20,
-                    enemy.center_y + math.sin(math.radians(enemy.angle)) * 20,
-                    enemy.angle,
-                    is_player_bullet=False
-                )
-                self.bullets.append(bullet)
-                enemy.last_shot = self.total_time
-
-    def check_collision_bullet_wall(self, bullet):
-        """Проверка столкновения пули со стеной"""
-        for wall in self.wall_list:
-            wall_left = wall.center_x - wall.width / 2
-            wall_right = wall.center_x + wall.width / 2
-            wall_bottom = wall.center_y - wall.height / 2
-            wall_top = wall.center_y + wall.height / 2
-
-            if (wall_left <= bullet.center_x <= wall_right and
-                    wall_bottom <= bullet.center_y <= wall_top):
-                return True
-        return False
-
-    def check_collision_bullet_tank(self, bullet, tank):
-        """Проверка столкновения пули с танком"""
-        if not tank.is_alive:
-            return False
-
-        # Проверяем расстояние от центра пули до центра танка
-        dx = bullet.center_x - tank.center_x
-        dy = bullet.center_y - tank.center_y
-        distance = math.sqrt(dx * dx + dy * dy)
-
-        # Используем упрощенную проверку - круг вокруг танка
-        tank_radius = max(tank.width, tank.height) / 2
-        return distance < (tank_radius + bullet.radius)
-
-    def on_update(self, delta_time):
-        """Обновление игры"""
-        if self.game_over:
-            return
-
-        self.total_time += delta_time
-
-        # Обновление игрока с передачей стен для проверки столкновений
-        if self.player.is_alive:
-            self.player.update(delta_time, self.wall_list)
-
-            # Не даем игроку выйти за границы экрана
-            self.player.center_x = max(20, min(SCREEN_WIDTH - 20, self.player.center_x))
-            self.player.center_y = max(20, min(SCREEN_HEIGHT - 20, self.player.center_y))
-
-        # Обновление врагов
-        for enemy in self.enemies:
-            self.enemy_ai(enemy, delta_time)
-            if enemy.is_alive:
-                enemy.update(delta_time, self.wall_list)
-
-                # Не даем врагам выйти за границы экрана
-                enemy.center_x = max(20, min(SCREEN_WIDTH - 20, enemy.center_x))
-                enemy.center_y = max(20, min(SCREEN_HEIGHT - 20, enemy.center_y))
-
-        # Обновление пуль
-        bullets_to_remove = []
-        for bullet in self.bullets:
-            if not bullet.update(delta_time):
-                bullets_to_remove.append(bullet)
-                continue
-
-            # Столкновения пуль со стенами
-            if self.check_collision_bullet_wall(bullet):
-                bullets_to_remove.append(bullet)
-                continue
-
-            # Столкновения пуль игрока с врагами
-            if bullet.is_player_bullet:
-                for enemy in self.enemies:
-                    if enemy.is_alive and self.check_collision_bullet_tank(bullet, enemy):
-                        bullets_to_remove.append(bullet)
-                        enemy.health -= 25
-                        if enemy.health <= 0:
-                            enemy.is_alive = False
-                            self.score += 100
-                        break
-
-            # Столкновения пуль врагов с игроком
-            elif not bullet.is_player_bullet:
-                if self.player.is_alive and self.check_collision_bullet_tank(bullet, self.player):
-                    bullets_to_remove.append(bullet)
-                    self.player.health -= 20
-                    if self.player.health <= 0:
-                        self.player.is_alive = False
-                        self.player.health = 0
-                        self.game_over = True
-
-        # Удаление пуль
-        for bullet in bullets_to_remove:
-            if bullet in self.bullets:
-                self.bullets.remove(bullet)
-
-        # Проверка победы на уровне
-        if not self.game_over and self.player.is_alive:
-            all_enemies_dead = all(not enemy.is_alive for enemy in self.enemies)
-            if all_enemies_dead:
-                self.score += 500  # Бонус за завершение уровня
-
-                # Переход на следующий уровень
-                if self.current_level + 1 < len(self.levels):
-                    self.current_level += 1
-                    self.setup(self.current_level)
-                    print(f"Переход на уровень {self.current_level + 1}")
-                else:
-                    # Все уровни пройдены
-                    self.game_over = True
-                    print("Поздравляем! Все уровни пройдены!")
-
-
-def main():
-    """Запуск игры"""
-    window = Game()
-    arcade.run()
+        pygame.init()
+        self.screen = pygame.display.set_mode((Config.WIDTH, Config.HEIGHT))
+        pygame.display.set_caption("Марио: Бесконечный Забег")
+        self.clock = pygame.time.Clock()
+
+        # Шрифты разного размера
+        self.font_large = pygame.font.SysFont("impact", 64)
+        self.font_medium = pygame.font.SysFont("impact", 36)
+
+        self.state = Config.STATE_MENU
+        self.camera_x = 0  # Чтобы фон рисовался в меню
+
+        self.generate_background()
+
+    def generate_background(self):
+        self.clouds = [(random.randint(0, Config.WIDTH), random.randint(50, 200), random.randint(40, 80)) for _ in
+                       range(8)]
+        self.mountains = [(x * 150, Config.HEIGHT - random.randint(150, 350)) for x in range(10)]
+
+    def draw_background(self):
+        self.screen.fill(Config.SKY_COLOR)
+        for cx, cy, csize in self.clouds:
+            real_x = (cx - self.camera_x * 0.1) % (Config.WIDTH + 100) - 100
+            pygame.draw.ellipse(self.screen, Config.CLOUD_COLOR, (real_x, cy, csize, csize // 2))
+        for mx, my in self.mountains:
+            real_x = (mx - self.camera_x * 0.3) % (Config.WIDTH + 300) - 300
+            pygame.draw.polygon(self.screen, Config.MOUNTAIN_COLOR, [
+                (real_x, Config.HEIGHT), (real_x + 150, my), (real_x + 300, Config.HEIGHT)
+            ])
+
+    def draw_text(self, text, font, color, x, y):
+        # Функция для удобной отрисовки красивого текста с черной тенью
+        shadow = font.render(text, True, (0, 0, 0))
+        main_text = font.render(text, True, color)
+        self.screen.blit(shadow, (x + 3, y + 3))
+        self.screen.blit(main_text, (x, y))
+
+    def reset_game(self):
+        self.all_sprites = pygame.sprite.Group()
+        self.platforms = pygame.sprite.Group()
+        self.lavas = pygame.sprite.Group()
+        self.coins = pygame.sprite.Group()
+
+        self.player = Player(100, 300)
+        self.all_sprites.add(self.player)
+
+        self.score = 0
+        self.camera_x = 0
+        self.max_gen_x = 0
+
+        self.generate_platform(0, Config.HEIGHT - 40, 800)
+
+    def generate_platform(self, x, y, width):
+        plat = Platform(x, y, width, 200)
+        self.platforms.add(plat)
+        self.all_sprites.add(plat)
+        self.max_gen_x = x + width
+
+    def generate_level_chunk(self):
+        while self.max_gen_x < self.camera_x + Config.WIDTH * 2:
+            gap = random.randint(80, 220)
+            plat_width = random.randint(200, 500)
+            plat_y = random.randint(Config.HEIGHT - 180, Config.HEIGHT - 40)
+
+            if random.random() > 0.4:
+                lava = Lava(self.max_gen_x, Config.HEIGHT - 30, gap, 200)
+                self.lavas.add(lava)
+                self.all_sprites.add(lava)
+
+            self.generate_platform(self.max_gen_x + gap, plat_y, plat_width)
+
+            if random.random() > 0.3:
+                coin_x = self.max_gen_x - plat_width // 2
+                coin_y = plat_y - random.randint(60, 120)
+                coin = Coin(coin_x, coin_y)
+                self.coins.add(coin)
+                self.all_sprites.add(coin)
+
+    def clean_up_offscreen(self):
+        for sprite in self.all_sprites:
+            if sprite != self.player and sprite.rect.right < self.camera_x - 200:
+                sprite.kill()
+
+    def run(self):
+        running = True
+        while running:
+            # 1. СОБЫТИЯ И УПРАВЛЕНИЕ СОСТОЯНИЯМИ
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+
+                if event.type == pygame.KEYDOWN:
+                    if self.state == Config.STATE_MENU:
+                        if event.key == pygame.K_SPACE:
+                            self.reset_game()
+                            self.state = Config.STATE_PLAYING
+                    elif self.state == Config.STATE_GAME_OVER:
+                        if event.key == pygame.K_SPACE:
+                            self.reset_game()
+                            self.state = Config.STATE_PLAYING
+
+            # 2. ИГРОВАЯ ЛОГИКА
+            if self.state == Config.STATE_PLAYING:
+                self.player.update(self.platforms, self.lavas)
+
+                if self.player.is_dead:
+                    self.state = Config.STATE_GAME_OVER
+
+                coins_hit = pygame.sprite.spritecollide(self.player, self.coins, True)
+                self.score += len(coins_hit)
+
+                target_camera_x = self.player.rect.x - Config.WIDTH // 3
+                if target_camera_x > self.camera_x:
+                    self.camera_x = target_camera_x
+
+                self.generate_level_chunk()
+                self.clean_up_offscreen()
+
+            # 3. ОТРИСОВКА
+            self.draw_background()
+
+            if self.state == Config.STATE_MENU:
+                self.draw_text("ПИКСЕЛЬНЫЙ БЕГУН", self.font_large, Config.COIN_COLOR, 130, 150)
+                self.draw_text("Нажмите ПРОБЕЛ для старта", self.font_medium, (255, 255, 255), 200, 300)
+                self.draw_text("Управление: WASD", self.font_medium, (200, 200, 200), 260, 400)
+
+            elif self.state == Config.STATE_PLAYING or self.state == Config.STATE_GAME_OVER:
+                for sprite in self.all_sprites:
+                    self.screen.blit(sprite.image, (sprite.rect.x - self.camera_x, sprite.rect.y))
+
+                self.draw_text(f"МОНЕТЫ: {self.score}", self.font_medium, (255, 255, 255), 20, 20)
+
+                if self.state == Config.STATE_GAME_OVER:
+                    # Затемняем экран полупрозрачной пленкой
+                    death_bg = pygame.Surface((Config.WIDTH, Config.HEIGHT), pygame.SRCALPHA)
+                    death_bg.fill((0, 0, 0, 180))
+                    self.screen.blit(death_bg, (0, 0))
+
+                    self.draw_text("ИГРА ОКОНЧЕНА", self.font_large, (255, 50, 50), 200, 150)
+                    self.draw_text(f"Итоговый счет: {self.score}", self.font_large, Config.COIN_COLOR, 200, 250)
+                    self.draw_text("Нажмите ПРОБЕЛ для рестарта", self.font_medium, (255, 255, 255), 180, 400)
+
+            pygame.display.flip()
+            self.clock.tick(Config.FPS)
+
+        pygame.quit()
+        sys.exit()
 
 
 if __name__ == "__main__":
-    main()
+    game = Game()
+    game.run()
